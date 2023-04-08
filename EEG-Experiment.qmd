@@ -1,0 +1,373 @@
+---
+title: "COGS 219 EEG Experiment"
+author: "Lev Goldman"
+format: html
+editor: source
+---
+
+```{r}
+#| label: Load libraries.
+#| echo: false
+#| include: false
+
+library(osfr)
+library(readr)
+library(tidyverse)
+library(ez)
+library(data.table)
+library(plotrix)
+```
+
+```{r}
+#| label: Load data from OSF.
+#| echo: false
+#| include: false
+
+# osf_retrieve_node("2pxf4") %>%
+#   osf_ls_files() %>%
+#   osf_download(path = "data/", conflicts = "skip", progress = TRUE)
+
+# 10 subject eeg dataset
+osf_retrieve_node("kzt2w") %>%
+  osf_ls_files() %>%
+  osf_download(path="data/", conflicts="skip")
+```
+
+## Introduction
+
+> As a note, I'll be writing this in a less formal style, because the people I'm submitting this to have read Mastroianni & Ludwin-Peery (2022) and understand that it *is* better. Even though it is often significantly more work.
+
+"Curiosity", as a big general term that we throw around a lot, but it's usually not well defined or understood. (ADD SOME STUFF) One way of thinking about curiosity is wanting to learn information, even when that information doesn't actually provide any tangible benefit. You might have already made a decision about what refrigerator you are buying and will be stuck with it for the next 10 years, but continue to look up reviews about it while you're waiting for it to arrive.[^1] The information in those reviews is called *non-instrumental information*, because you aren't going to use it to make any decisions —- it's just information for the sake of information. One of the ways that people explain human curiosity is that we process rewards the same way we process information, and so even if that information is not helpful to us we value it like a reward. This is called the *common currency hypothesis*. In our study, we tried to set up a situation to test this using a deck of cards (more on that in the Methods section).
+
+Some researchers think that looking at electrical activity in specific parts of the brain will help us find answers to large questions about even larger topics (e.g. "curiosity"), although not everyone agrees on this point.[^2]
+
+But on the assumption that it will, a study called *The Neural Encoding of Prediction Errors* suggested that looking at the electrical activity (EEG waves) in the center front part of the brain right around the time that someone got a little bit of information could help figure out if the common currency hypothesis is correct (Brydevall et al., 2018). Researchers could compare these *event-related potentials* (ERPs) between times when you were shown information about the likelihood of a reward and times when you were shown non-instrumental information, and if the waveforms looked the same then it would suggest that the two things were being processed similarly.[^3]
+
+The problem is, a lot of scientific studies do not work when you try them again, even when you try to match the ways that they were done the first time as closely as possible (a process called replication). This is a huge issue for science, which spends most of its time trying to find deep fundamental truths about the universe and the rest of its time trying to get money.[^4] If what you say you found can't be found again, have you really found an actual effect? Since scientific papers are using inferential statistics to publish probabilities of having found an effect (even if they pretend that's not what's going on) the project of science requires replication to get lower the chance that what happened in that one study was a fluke. So we have chosen to run a replication of Brydevall et al. (2018) to see if it holds up. Here's how we've set it up:
+
+[^1]: This may seem like a weird example. It was chosen because it is similar to the way that the card flips in our experiment work -- you've already bought the refrigerator, so there's no actual value to this information. You might argue that it helps you make plans about what you're going to do with the refrigerator, but I would argue that you can make the same case for the card flips that we're doing.
+[^2]: But everyone *is* required to take a quantitative research methods course where you do that.
+[^3]: I feel obligated to interject here (with no sources, so perhaps I am completely wrong) that the packing and connections of neurons is so incredibly dense that we really can't say what "circuitry" is involved here, just that there's some similar big patterns of electrical activity going on in the same approximate region of the brain. Anyway.
+[^4]: Citation not needed.
+
+## Methods
+
+```{r}
+#| label: Load EEG & Behavioral data.
+#| echo: false
+#| include: false
+
+behavioral.data <- read_csv('data/behavioral.csv')
+eeg.data <- read_csv('data/eeg.csv')
+```
+
+### Participants
+We recruited other college students who we can coerce into doing this with a small cash payment or gift card — so a lot of people currently taking cognitive science classes or friends of people currently taking cognitive science classes. We kept the experiment going until we had 40 completed runs, a number we settled on because we needed 38 subjects for the level of statistical power we're hoping to achieve, so having 40 allows us to lose 2 if they don't meet our exclusion criteria (failing more than 2 attention check trials) and still have enough. We put an eeg cap on participants' heads (our specific model is the CGX Quick-20r v2, and subjects had to have head circumferences of less than 62cm to fit into it) and then had them sit in front of a monitor running our experiment (programmed in jsPsych) and respond to prompts with the arrow keys on their keyboard.
+
+
+```{r}
+#| label: Count number of subjects.
+#| echo: false
+#| include: false
+
+n.subjects <- behavioral.data %>%
+  pull(subject) %>%
+  unique() %>%
+  length()
+```
+
+`r n.subjects` subjects completed the experiment.
+
+```{r}
+#| label: Counting failed attention checks per subject.
+#| echo: false
+#| include: false
+
+catch.trials.data <- behavioral.data %>%
+  filter(task == 'catch' & catch_n == card_id & phase == "test") %>%
+  mutate(catch_outcome = rt < 1500) %>%
+  replace_na(list(catch_outcome = FALSE))
+
+failed.catches <- catch.trials.data %>%
+  filter(catch_outcome == FALSE)
+
+per.subj.catches <- catch.trials.data %>% 
+  group_by(subject) %>% 
+  count(catch_outcome == FALSE) %>%
+  mutate(num_fails = 5 - n) %>%       # SOMETHING HERE ISN'T WORKING RIGHT... THE failed.catches IS RIGHT BUT COUNT HERE IS WRONG
+  select(subject, num_fails)
+```
+
+`r n.subjects - 2` passed all attention checks.
+
+2 subjects failed one attention check.
+
+```{r}
+#| label: M and SD of attention checks.
+#| echo: false
+#| include: false
+
+mean.catch.rt <- mean(catch.trials.data$rt, na.rm = TRUE)
+sd.catch.rt <- sd(catch.trials.data$rt, na.rm = TRUE)
+```
+
+The mean reaction time for attention check trials was `r mean.catch.rt` .
+
+The standard deviation was `r sd.catch.rt` .
+
+```{r}
+#| label: Filtering out subjects who failed >2 attention checks.
+#| echo: false
+#| include: false
+
+# currently no subjects have, so this is just a dataframe getting created, in case I need to exclude subjects later.
+# Also where we filter for only 5 flips of reveal and add hand_ID
+attentive.subjects <- behavioral.data %>%
+  filter(task == "reveal" & phase == "test") %>%
+  group_by(subject) %>%
+  mutate(hand_id = rep(1:80, each = 5))
+
+```
+### Procedures & Materials
+Subjects were given visual and verbal instructions and few practice rounds to be completed with the experimenter present in the room to answer any questions. The actual testing phase had 5 rounds, each with 16 actual trials and 1 attention check trial. For each trial, the participant would be asked to choose between Red and Black, and then would see 5 cards flip over one-by-one (see FIGURE SOMETHING). They were asked to not blink during this time and keep their eyes focussed on the fixation cross in the center of the cards, which proved difficult for some subjects.
+
+The trials were rigged so the sequence of wins and losses was random for each participant but predetermined, so that no matter what the participant chose they would end up with an exactly equal number of wins and losses throughout the experiment.[^5] 
+
+The central idea of the card flips was that each card that was being flipped over would give the subject some more information about how the final distribution of the hand would end up, and what the likelihood of them winning was (based on their choice). However, not all card flips give the same amount of information —- if you have chosen Red and have already been dealt one red card, getting another one significantly increases your odds of winning, and also cuts down the number of possible ways the hand could turn out (making you more certain of the outcome). Alternatively, if you were given a Black card, you now are back to a 50/50 chance of winning and there are more ways the hand could end than with the Red card. The premise is that we take the average of the two possible outcomes and call that the amount of information or reward expected by the subject, and then when the card is actually turned over and a different amount of information or reward probability is discovered we can subtract to find the "error" in the subject's prediction.[^6] This is Feedback-Related Negativity. I THINK? (I'm writing FAST here). The discovery of that error (which can be positive or negative) is what we're looking at with our EEG ERPs (those Event Related Potential waves), during a period of 200-350ms after the card gets flipped over (the FRN period).
+
+All of this was preregistered ahead of time HERE(insert link). And if you want to see our experimental materials, they're HERE(another link).
+
+[^5]: The biggest reason for this was because we had a bunch of gift cards with exact amounts of money on it, and needed to be able to tell subjects that they'd keep their 8 dollars in winnings, so it had to be exactly 8 dollars.
+[^6]: Frankly I'm still skeptical that as we go through life we're doing the cold hard error calculations like this... I know I frequently have expectations that are all over the place and wildly irrational.
+
+## Results
+
+After we had gotten all of our participants, we ran a bunch of R scripts to process the raw EEG data (see HERE(another link)), and then analyzed the behavioral data we got from the experiment to calculate the *information prediction errors* (IPEs) and *reward prediction errors* (RPEs). All of our analysis code is available HERE(link).
+
+### Behavioral
+
+```{r}
+#| label: Trying binomial distribution stuff for RPE IPE on a MANIPULATED (MADE UP) TEST HAND THAT MATCHES THE GOOGLE SLIDES!
+#| echo: false
+#| include: false
+
+# H.entropy.eq <- function(p) {
+#   h <- (-p * log2(p) - (1-p) * log2(1-p)) # not totally sure this is written out right... (but I think it is)
+#   # CURRENT PROBLEM IS THAT IF YOU GIVE IT 0 IT RETURNS "NaN" (not a number) and this REALLY creates problems down the line
+# }
+# 
+# DOING RPE
+# manip.hand <- read_csv('data/manipulated_csv.csv') %>%
+#   filter(subject == 10 & hand_ID == 42) %>%
+#   select(phase:hand_ID) %>%
+#   mutate(binom_win_prob = 1 - pbinom((2 - card_value - wins_so_far), size = 5-card_id, prob = 0.5)) %>%
+#   mutate(RPE = binom_win_prob - win_prob_before) %>%
+# # OMG OMG OMG IT WORKS ABOVE HERE
+#   mutate(i_actualflip = H.entropy.eq(win_prob_before) - H.entropy.eq(binom_win_prob)) %>%
+#   mutate(i_oppositeflip = H.entropy.eq(win_prob_before) - H.entropy.eq(1 - pbinom((2 - !card_value - wins_so_far), size = 5-card_id, prob = 0.5)))
+#
+# manip.hand$i_actualflip[is.nan(manip.hand$i_actualflip)] <- 1
+# manip.hand$i_oppositeflip[is.nan(manip.hand$i_oppositeflip)] <- 1
+#
+# manip.hand <- manip.hand %>%
+#   mutate(i_expected = (i_actualflip + i_oppositeflip) / 2) %>%
+#   mutate(IPE = i_actualflip - i_expected)
+
+```
+
+```{r}
+#| label: Calculating RPE & IPE on ACTUAL DATA.
+#| echo: false
+#| include: false
+
+H.entropy.eq <- function(p) {
+  h <- (-p * log2(p) - (1-p) * log2(1-p)) # not totally sure this is written out right... (but I think it is)
+  # if (is.nan(-p * log2(p) - (1-p) * log2(1-p))) {return(1)}
+  # else {return(-p * log2(p) - (1-p) * log2(1-p))}
+  h[is.nan(h)] <- 0
+  return(h)
+}
+
+# RPE is working!!
+attentive.subjects <- attentive.subjects %>%
+  group_by(subject) %>%
+  select(subject:hand_id) %>%
+  group_by(hand_id) %>%
+  mutate(binom_win_prob = 1 - pbinom((2 - card_value - wins_so_far), size = 5-card_id, prob = 0.5)) %>%
+  mutate(win_prob_before = shift(binom_win_prob, type = "lag", fill = 0.500)) %>%
+  mutate(win_prob_alt = 1 - pbinom((2 - (!card_value) - wins_so_far), size = 5-card_id, prob = 0.5)) %>%
+  mutate(RPE = binom_win_prob - win_prob_before) %>%
+  mutate(RPE_type = case_when(RPE > 0 ~ "positive", RPE < 0 ~ "negative", RPE == 0 ~ "none")) %>%
+# IPE BELOW HERE
+  mutate(i_actualflip = H.entropy.eq(shift(binom_win_prob, type = "lag", fill = 0.500)) - H.entropy.eq(binom_win_prob)) %>% # Actual Card Flip Info
+  mutate(i_oppositeflip = H.entropy.eq(win_prob_before) - H.entropy.eq(win_prob_alt)) %>% # Info if the Card was Opposite
+  mutate(i_expected = ((i_actualflip + i_oppositeflip) / 2)) %>% # Amount of Info Expected (average of actual + opposite)
+  mutate(IPE = i_actualflip - i_expected) %>% # Information Prediction Error! (finally)
+  mutate(IPE_type = case_when(IPE > 0 ~ "positive", IPE < 0 ~ "negative", IPE == 0 ~ "none"))
+
+```
+
+
+### EEG
+
+```{r}
+#| label: EEG Data Filtering
+#| echo: false
+#| include: false
+
+tenth.eeg <- eeg.data[1:(30000000 / 10), ]
+
+filtered.eeg <- tenth.eeg %>%
+  #filter((electrode == "Cz" | electrode == "Fz") & good_segment)
+  filter(good_segment)
+
+```
+
+```{r}
+#| label: Merging EEG & RPE/IPE Data, counting good segments, removing subjects w/ <20 good segments
+#| echo: false
+#| include: false
+
+
+merged.data <- merge(filtered.eeg, attentive.subjects, by = c("subject", "hand_id", "card_id")) %>%
+  select(-(stimulus:red), -card_value, -wins_so_far, -catch_n)
+
+
+subject.segments <- merged.data %>%
+  group_by(subject, electrode, RPE_type, hand_id) %>%
+  count(good_segment)
+
+names(subject.segments)[6] = "num_segments"
+
+
+```
+
+```{r}
+#| label: Removing subjects w/ <20 good segments, calculating M and SD of good segments.
+#| echo: false
+#| include: false
+
+bad.subj.seg <- subject.segments %>%
+  filter(num_segments < 20)
+
+num.20bad.subjs <- nrow(bad.subj.seg)
+M.subj.goodsegs <- mean(subject.segments$num_segments, na.rm = TRUE)
+SD.subj.goodsegs <- sd(subject.segments$num_segments, na.rm = TRUE)
+```
+
+`r num.20bad.subjs` had more than 20 bad segments. (NOTE: REVISIT THIS ONCE YOU RUN WITH ALL EEG DATA (NOT JUST 10%))
+
+The mean number of good segments was `r M.subj.goodsegs` with a standard deviation of `r`SD.subj.goodsegs\`.
+
+```{r}
+#| label: Calculating +/- RPE/IPE Grand Average Waveforms
+
+gAVG.RPEs <- merged.data %>%
+  filter(RPE_type != "none") %>%
+  group_by(t, RPE_type) %>%
+  summarize(v = mean(v)) %>%
+  mutate(std_err = std.error(v))
+
+gAVG.RPEs %>%
+  ungroup() %>%
+  filter(RPE_type == "positive") %>%
+  ggplot(aes(x = t, y = v)) +
+  geom_ribbon(aes(ymin = v-std_err, ymax = v+std_err), fill = "grey70") +
+  geom_line() +
+  scale_y_reverse() +
+  ggtitle("Grand Average Waveform for Positive RPE") +
+  geom_hline(yintercept = 0, color = "blue")
+
+gAVG.RPEs %>%
+  ungroup() %>%
+  filter(RPE_type == "negative") %>%
+  ggplot(aes(x = t, y = v)) +
+  geom_ribbon(aes(ymin = v-std_err, ymax = v+std_err), fill = "grey70") +
+  geom_line() +
+  scale_y_reverse() +
+  ggtitle("Grand Average Waveform for Negative RPE") +
+  geom_hline(yintercept = 0, color = "blue")
+
+gAVG.IPEs <- merged.data %>%
+  filter(IPE_type != "none") %>%
+  group_by(t, IPE_type) %>%
+  summarize(v = mean(v)) %>%
+  mutate(std_err = std.error(v))
+
+gAVG.IPEs %>%
+  ungroup() %>%
+  filter(IPE_type == "positive") %>%
+  ggplot(aes(x = t, y = v)) +
+  geom_ribbon(aes(ymin = v-std_err, ymax = v+std_err), fill = "grey70") +
+  geom_line() +
+  scale_y_reverse() +
+  ggtitle("Grand Average Waveform for Positive IPE") +
+  geom_hline(yintercept = 0, color = "blue")
+
+gAVG.IPEs %>%
+  ungroup() %>%
+  filter(IPE_type == "negative") %>%
+  ggplot(aes(x = t, y = v)) +
+  geom_ribbon(aes(ymin = v-std_err, ymax = v+std_err), fill = "grey70") +
+  geom_line() +
+  scale_y_reverse() +
+  ggtitle("Grand Average Waveform for Negative IPE") +
+  geom_hline(yintercept = 0, color = "blue")
+
+```
+
+```{r}
+#| label: Calculating avg. amplitude per subject per electrode during FRN Window.
+
+# NOTE: FRN Window is 200-350ms according to preregistration (and original study).
+
+FRN.avgs <- merged.data %>%
+  filter(t >= 200 & t <= 350) %>%
+  group_by(subject, t, electrode, RPE_type, IPE_type) %>%
+  summarize(avg_v = mean(v), .groups = "keep") %>%
+  ungroup(t) %>%
+  summarize(amp = max(avg_v) - min(avg_v))
+# not positive that I'm doing this averaging correctly...
+    
+
+# just a graph for my own amusement!
+merged.data %>%
+  group_by(t, electrode, RPE_type, IPE_type) %>%
+  summarize(avg_v = mean(v), .groups = "keep") %>%
+  ggplot(aes(x = t, y = avg_v, color = electrode, alpha = 0.001)) +
+  geom_jitter(shape = 1) +
+  geom_hline(yintercept = 0, color = "grey40", alpha = .8) + 
+  scale_y_reverse() +
+  ggtitle("Just a Fun Graph for Lev's Amusement")
+
+merged.data %>%
+  group_by(t, electrode, RPE_type, IPE_type) %>%
+  summarize(avg_v = mean(v), .groups = "keep") %>%
+  ggplot(aes(x = t, y = avg_v, color = electrode, alpha = 0.001)) +
+  geom_jitter(shape = 1) +
+  geom_hline(yintercept = 0, color = "grey40", alpha = .8) + 
+  scale_y_reverse() +
+  facet_grid(IPE_type ~ RPE_type) +
+  ggtitle("Just a Fun Graph for Faceting's Amusement", "RPE types along top, IPE types down side")
+
+
+```
+
+```{r}
+#| label: I don't really know how to do these ANOVAs...
+
+aov.data <- FRN.avgs %>%
+  filter(IPE_type != "none" & RPE_type != "none") %>%
+  filter(electrode == "Fz" | electrode == "Cz")
+
+aov(amp ~ electrode * IPE_type + Error(subject / electrode * IPE_type), aov.data)
+aov(amp ~ electrode * RPE_type + Error(subject / electrode * RPE_type), aov.data)
+
+```
+
+## Discussion
+I'm not doing this part yet, because I spent way longer on actual data analysis than I meant to (but I learned a TON and am having a great time), and because I am not confident that what I did was actually right?? And this is an ungraded draft that probably nobody will be reading (a structure of coursework that I find really bothersome, if someone actually is reading this).
+
+
+## Bibliography
+de Leeuw, J. R. (2015). jsPsych: A JavaScript library for creating behavioral experiments in a web browser. Behavior Research Methods, 47(1), 1-12. doi:10.3758/s13428-014-0458-y.
